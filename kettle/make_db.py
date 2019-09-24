@@ -26,6 +26,8 @@ import time
 import urllib.parse
 from xml.etree import cElementTree as ET
 
+import google.auth
+from google.auth.transport.requests import AuthorizedSession
 import multiprocessing
 import multiprocessing.pool
 import requests
@@ -44,7 +46,9 @@ class GCSClient:
     def __init__(self, jobs_dir, metadata=None):
         self.jobs_dir = jobs_dir
         self.metadata = metadata or {}
-        self.session = requests.Session()
+        credentials, project = google.auth.default()
+        # self.session = requests.Session()
+        self.session = AuthorizedSession(credentials)
 
     def _request(self, path, params, as_json=True):
         """GETs a JSON resource from GCS, with retries on failure.
@@ -56,12 +60,17 @@ class GCSClient:
         url = 'https://www.googleapis.com/storage/v1/b/%s' % path
         for retry in range(23):
             try:
+                print('### make db 59 url = {} and param = {}'.format(url, params))
+                # resp = self.session.get(url, params=params, stream=False)
                 resp = self.session.get(url, params=params, stream=False)
+                print('     resp = {}'.format(resp))
                 if 400 <= resp.status_code < 500 and resp.status_code != 429:
                     return None
                 resp.raise_for_status()
                 if as_json:
+                    print('     resp json = {}'.format(resp.json()))
                     return resp.json()
+                print('     resp text = {}'.format(resp.text))
                 return resp.text
             except requests.exceptions.RequestException:
                 logging.exception('request failed %s', url)
@@ -77,8 +86,10 @@ class GCSClient:
     def get(self, path, as_json=False):
         """Get an object from GCS."""
         bucket, path = self._parse_uri(path)
-        return self._request('%s/o/%s' % (bucket, urllib.parse.quote(path, '')),
-                             {'alt': 'media'}, as_json=as_json)
+        tmp = '%s/o/%s' % (bucket, urllib.parse.quote(path, ''))
+        print('#### make db 85 bucket = {} path = {}'.format(bucket, path))
+        print('     tmp = {}'.format(tmp))
+        return self._request(tmp, {'alt': 'media'}, as_json=as_json)
 
     def ls(self, path, dirs=True, files=True, delim=True, item_field='name'):
         """Lists objects under a path on gcs."""
@@ -86,6 +97,7 @@ class GCSClient:
 
         bucket, path = self._parse_uri(path)
         params = {'prefix': path, 'fields': 'nextPageToken'}
+        print('##### make db 89 bucket = {} path = {} and params = {}'.format(bucket, path, params))
         if delim:
             params['delimiter'] = '/'
             if dirs:
@@ -94,6 +106,7 @@ class GCSClient:
             params['fields'] += ',items(%s)' % item_field
         while True:
             resp = self._request('%s/o' % bucket, params)
+            print('#### make db 100 resp = {}'.format(resp))
             if resp is None:  # nothing under path?
                 return
             for prefix in resp.get('prefixes', []):
@@ -127,6 +140,7 @@ class GCSClient:
 
     def _get_jobs(self):
         """Generates all jobs in the bucket."""
+        print('#### make_db 130 _get_jobs')
         for job_path in self.ls_dirs(self.jobs_dir):
             yield os.path.basename(os.path.dirname(job_path))
 
@@ -147,18 +161,31 @@ class GCSClient:
             key=pad_numbers, reverse=True)
 
     def get_started_finished(self, job, build):
+        print('##### make_db 150 job = {} build = {}'.format(job, build))
+        print('     self metadata get pr = {}'.format(self.metadata.get('pr')))
         if self.metadata.get('pr'):
-            build_dir = self.get('%s/directory/%s/%s.txt' % (self.jobs_dir, job, build)).strip()
+            print('    yes pr')
+            dir_path = os.path.join(self.jobs_dir, 'directory', job, '{}.txt'.format(build))
+            # build_dir = self.get('%s/directory/%s/%s.txt' % (self.jobs_dir, job, build)).strip()
+            build_dir = self.get(dir_path).strip()
         else:
-            build_dir = '%s%s/%s' % (self.jobs_dir, job, build)
+            print('    no pr')
+            build_dir = os.path.join('{}{}'.format(self.jobs_dir, job), build)
+            # build_dir = '%s%s/%s' % (self.jobs_dir, job, build)
+        print('#### make_db 155 build dir  ={}'.format(build_dir))
         started = self.get('%s/started.json' % build_dir, as_json=True)
         finished = self.get('%s/finished.json' % build_dir, as_json=True)
+        print('#### make db 166 started = {}'.format(started))
+        print('#### make db 167 started = {}'.format(finished))
         return build_dir, started, finished
 
     def get_builds(self, builds_have):
         """Generates all (job, build) pairs ever."""
+        print('##### make_db 160 builds_have = {}'.format(builds_have))
+        print('     self metadata = {}'.format(self.metadata))
         if self.metadata.get('pr'):
-            files = self.ls(self.jobs_dir + '/directory/', delim=False)
+            path = os.path.join(self.jobs_dir, 'directory/')
+            files = self.ls(path, delim=False)
             for fname in files:
                 if fname.endswith('.txt') and 'latest-build' not in fname:
                     job, build = fname[:-4].split('/')[-2:]
@@ -167,6 +194,7 @@ class GCSClient:
                     yield job, build
             return
         for job in self._get_jobs():
+            print('### job = {}'.format(job))
             if job in ('pr-e2e-gce', 'maintenance-ci-testgrid-config-upload'):
                 continue  # garbage.
             have = 0
@@ -230,6 +258,7 @@ def get_builds(db, jobs_dir, metadata, threads, client_class):
     sys.stdout.flush()
 
     jobs_and_builds = gcs.get_builds(builds_have)
+    print('##### make_db 238 jobs and builds = {}'.format(jobs_and_builds))
     pool = None
     if threads > 1:
         pool = multiprocessing.Pool(threads, mp_init_worker,
@@ -243,8 +272,9 @@ def get_builds(db, jobs_dir, metadata, threads, client_class):
             get_started_finished(job_build) for job_build in jobs_and_builds)
 
     try:
+        print('Starting a loop of builds iterator')
         for n, (build_dir, started, finished) in enumerate(builds_iterator):
-            print(build_dir)
+            print('#### make db 268 build dir = {}'.format(build_dir))
             if started or finished:
                 db.insert_build(build_dir, started, finished)
             if n % 200 == 0:
@@ -306,9 +336,10 @@ def download_junit(db, threads, client_class):
 
 def main(db, jobs_dirs, threads, get_junit, client_class=GCSClient):
     """Collect test info in matching jobs."""
-    get_builds(db, 'gs://kubernetes-jenkins/pr-logs', {'pr': True},
-               threads, client_class)
+    # get_builds(db, 'gs://kubernetes-jenkins/pr-logs', {'pr': True},
+                # threads, client_class)
     for bucket, metadata in jobs_dirs.items():
+        print("### make_db 318 bucket = {} and metadata = {}".format(bucket, metadata))
         if not bucket.endswith('/'):
             bucket += '/'
         get_builds(db, bucket, metadata, threads, client_class)

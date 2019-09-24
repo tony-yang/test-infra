@@ -30,6 +30,7 @@ class Database:
     def __init__(self, path=None):
         if path is None:
             path = os.getenv('KETTLE_DB') or 'build.db'
+        print('#### 33 db path = {}'.format(path))
         self.db = sqlite3.connect(path)
         self.db.executescript('''
             create table if not exists build(gcs_path primary key, started_json, finished_json, finished_time);
@@ -75,6 +76,8 @@ class Database:
         """
         started_json = started and json.dumps(started, sort_keys=True)
         finished_json = finished and json.dumps(finished, sort_keys=True)
+        print('====== model 79 started json = {}'.format(started_json))
+        print('====== model 80 finished json = {}'.format(finished_json))
         if not self.db.execute(
                 'select 1 from build where gcs_path=? '
                 'and started_json=? and finished_json=?',
