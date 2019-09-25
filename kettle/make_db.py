@@ -43,12 +43,13 @@ def pad_numbers(string):
 WORKER_CLIENT = None  # used for multiprocessing
 
 class GCSClient:
-    def __init__(self, jobs_dir, metadata=None):
+    def __init__(self, jobs_dir, metadata=None, session=requests.Session()):
         self.jobs_dir = jobs_dir
         self.metadata = metadata or {}
-        credentials, project = google.auth.default()
-        # self.session = requests.Session()
-        self.session = AuthorizedSession(credentials)
+        # credentials, project = google.auth.default()
+        # # self.session = requests.Session()
+        # self.session = AuthorizedSession(credentials)
+        self.session = session
 
     def _request(self, path, params, as_json=True):
         """GETs a JSON resource from GCS, with retries on failure.
@@ -89,7 +90,9 @@ class GCSClient:
         tmp = '%s/o/%s' % (bucket, urllib.parse.quote(path, ''))
         print('#### make db 85 bucket = {} path = {}'.format(bucket, path))
         print('     tmp = {}'.format(tmp))
-        return self._request(tmp, {'alt': 'media'}, as_json=as_json)
+        # return self._request(tmp, {'alt': 'media'}, as_json=as_json)
+        full_path = os.path.join(bucket, 'o', urllib.parse.quote(path, ''))
+        return self._request(full_path, {'alt': 'media'}, as_json=as_json)
 
     def ls(self, path, dirs=True, files=True, delim=True, item_field='name'):
         """Lists objects under a path on gcs."""
@@ -208,7 +211,7 @@ class GCSClient:
                 yield job, build
 
 
-def mp_init_worker(jobs_dir, metadata, client_class, use_signal=True):
+def mp_init_worker(jobs_dir, metadata, client_class, use_signal=True, session=requests.Session()):
     """
     Initialize the environment for multiprocessing-based multithreading.
     """
@@ -238,7 +241,7 @@ def get_junits(build_info):
         raise
 
 
-def get_builds(db, jobs_dir, metadata, threads, client_class):
+def get_builds(db, jobs_dir, metadata, threads, client_class, session=requests.Session()):
     """
     Adds information about tests to a dictionary.
 
@@ -248,7 +251,7 @@ def get_builds(db, jobs_dir, metadata, threads, client_class):
         threads: how many threads to use to download build information.
         client_class: a constructor for a GCSClient (or a subclass).
     """
-    gcs = client_class(jobs_dir, metadata)
+    gcs = client_class(jobs_dir, metadata, session)
 
     print('Loading builds from %s' % jobs_dir)
     sys.stdout.flush()
@@ -262,7 +265,7 @@ def get_builds(db, jobs_dir, metadata, threads, client_class):
     pool = None
     if threads > 1:
         pool = multiprocessing.Pool(threads, mp_init_worker,
-                                    (jobs_dir, metadata, client_class))
+                                    (jobs_dir, metadata, client_class, True, session))
         builds_iterator = pool.imap_unordered(
             get_started_finished, jobs_and_builds)
     else:
@@ -304,7 +307,7 @@ def remove_system_out(data):
     return data
 
 
-def download_junit(db, threads, client_class):
+def download_junit(db, threads, client_class, session=requests.Session()):
     """Download junit results for builds without them."""
     print("Downloading JUnit artifacts.")
     sys.stdout.flush()
@@ -312,12 +315,12 @@ def download_junit(db, threads, client_class):
     pool = None
     if threads > 1:
         pool = multiprocessing.pool.ThreadPool(
-            threads, mp_init_worker, ('', {}, client_class, False))
+            threads, mp_init_worker, ('', {}, client_class, False, session))
         test_iterator = pool.imap_unordered(
             get_junits, builds_to_grab)
     else:
         global WORKER_CLIENT  # pylint: disable=global-statement
-        WORKER_CLIENT = client_class('', {})
+        WORKER_CLIENT = client_class('', {}, session)
         test_iterator = (
             get_junits(build_path) for build_path in builds_to_grab)
     for n, (build_id, build_path, junits) in enumerate(test_iterator, 1):
@@ -334,7 +337,7 @@ def download_junit(db, threads, client_class):
         pool.join()
 
 
-def main(db, jobs_dirs, threads, get_junit, client_class=GCSClient):
+def main(db, jobs_dirs, threads, get_junit, client_class=GCSClient, session=requests.Session()):
     """Collect test info in matching jobs."""
     # get_builds(db, 'gs://kubernetes-jenkins/pr-logs', {'pr': True},
                 # threads, client_class)
@@ -342,9 +345,10 @@ def main(db, jobs_dirs, threads, get_junit, client_class=GCSClient):
         print("### make_db 318 bucket = {} and metadata = {}".format(bucket, metadata))
         if not bucket.endswith('/'):
             bucket += '/'
-        get_builds(db, bucket, metadata, threads, client_class)
+        print('#### make db main 348 session = {}'.format(session))
+        get_builds(db, bucket, metadata, threads, client_class, session)
     if get_junit:
-        download_junit(db, threads, client_class)
+        download_junit(db, threads, client_class, session)
 
 
 def get_options(argv):
@@ -370,8 +374,11 @@ def get_options(argv):
 
 
 if __name__ == '__main__':
+    credentials, _ = google.auth.default()
+    auth_session = AuthorizedSession(credentials)
     OPTIONS = get_options(sys.argv[1:])
     main(model.Database(),
          yaml.safe_load(open(OPTIONS.buckets)),
          OPTIONS.threads,
-         OPTIONS.junit)
+         OPTIONS.junit,
+         session=auth_session)
