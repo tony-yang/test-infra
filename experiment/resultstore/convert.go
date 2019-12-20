@@ -106,6 +106,7 @@ func convertSuiteMeta(suiteMeta gcs.SuitesMeta) resultstore.Suite {
 
 // Convert converts build metadata stored in gcp into the corresponding ResultStore Invocation, Target and Test.
 func convert(project, details string, url gcs.Path, result downloadResult) (resultstore.Invocation, resultstore.Target, resultstore.Test) {
+	fmt.Println("convert.go 109 Inside convert")
 	started := result.started
 	finished := result.finished
 	artifacts := result.artifactURLs
@@ -114,6 +115,16 @@ func convert(project, details string, url gcs.Path, result downloadResult) (resu
 	artifactsPath := basePath + "artifacts/"
 	buildLog := basePath + "build-log.txt"
 	bucket := url.Bucket()
+	fmt.Println("###############################")
+	fmt.Printf("started = %v\n", started)
+	fmt.Println("###############################")
+	fmt.Printf("finished = %v\n", finished)
+	fmt.Println("###############################")
+	fmt.Printf("artifacts = %v\n", artifacts)
+	fmt.Println("###############################")
+	fmt.Printf("basePath = %v\nartifactsPath = %v\nbuildLog = %v\n", basePath, artifactsPath, buildLog)
+	fmt.Println("###############################")
+	fmt.Printf("bucket= %v",bucket)
 	inv := resultstore.Invocation{
 		Project: project,
 		Details: details,
@@ -122,6 +133,12 @@ func convert(project, details string, url gcs.Path, result downloadResult) (resu
 				ID:          resultstore.InvocationLog,
 				ContentType: "text/plain",
 				URL:         buildLog, // ensure build-log.txt appears as the invocation log
+			},
+		},
+		Properties: []resultstore.Property{
+			{
+				Key: "job-name",
+				Value: "ci-kubernetes-coverage-e2e-gci-gce",
 			},
 		},
 	}

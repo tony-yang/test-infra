@@ -408,6 +408,7 @@ func transferLatest(ctx context.Context, storageClient *storage.Client, rsClient
 		if err != nil {
 			return fmt.Errorf("bad %s path: %v", build, err)
 		}
+		logrus.Infof("transfer build for path %q", path)
 		if err := transferBuild(ctx, storageClient, rsClient, project, *path, override, includePending); err != nil {
 			return fmt.Errorf("%s: %v", build, err)
 		}
@@ -426,11 +427,14 @@ func transferBuild(ctx context.Context, storageClient *storage.Client, rsClient 
 	log := logrus.WithFields(logrus.Fields{"build": build})
 
 	log.Debug("Downloading...")
+	log.Info("==============================================================================================")
+	log.Info("Downloading...")
 	result, err := download(ctx, storageClient, build)
 	if err != nil {
 		return fmt.Errorf("download: %v", err)
 	}
 
+	//log.Infof("result = %v", result)
 	switch val, _ := result.started.Metadata.String(resultstoreKey); {
 	case val != nil && override:
 		log = log.WithFields(logrus.Fields{"previously": *val})
@@ -439,6 +443,9 @@ func transferBuild(ctx context.Context, storageClient *storage.Client, rsClient 
 		log.WithFields(logrus.Fields{
 			"resultstore": *val,
 		}).Debug("Already transferred")
+		log.WithFields(logrus.Fields{
+			"resultstore": *val,
+		}).Info("already transferred")
 		return nil
 	}
 
@@ -449,19 +456,29 @@ func transferBuild(ctx context.Context, storageClient *storage.Client, rsClient 
 
 	desc := "Results of " + path.String()
 	log.Debug("Converting...")
+	fmt.Println("==============================================================================================")
+	log.Info("Converting ...")
 	inv, target, test := convert(project, desc, path, *result)
 
 	if project == "" {
-		print(inv.To(), test.To())
+		//print(inv.To(), test.To())
+		fmt.Println("Invocation =======================================")
+		print(inv.To())
+		fmt.Println("Target =========================================")
+		print(target.To())
+		fmt.Println("Test =============================")
 		return nil
 	}
 
 	log.Debug("Uploading...")
+	log.Info("==============================================================================================")
+	log.Info("Uploading....")
 	viewURL, err := upload(rsClient, inv, target, test)
 	if err != nil {
 		return fmt.Errorf("upload %s: %v", viewURL, err)
 	}
 	log = log.WithFields(logrus.Fields{"resultstore": viewURL})
+	log.Info("==============================================================================================")
 	log.Info("Transferred result")
 	changed, err := insertLink(&result.started, viewURL)
 	if err != nil {

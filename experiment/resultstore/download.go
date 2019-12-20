@@ -50,10 +50,13 @@ func download(ctx context.Context, client *storage.Client, build gcs.Build) (*do
 		return nil, fmt.Errorf("started: %v", err)
 	}
 	log.Debug("Read finished...")
+	log.Info("read finished...")
 	finished, err := build.Finished()
 	if err != nil {
 		return nil, fmt.Errorf("finished: %v", err)
 	}
+	fmt.Println("=============================================")
+	fmt.Printf("finished = %v\n", finished)
 
 	ec := make(chan error, 2)
 	artifacts := make(chan string)
